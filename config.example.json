@@ -1,0 +1,15 @@
+{
+  "server_name": "NoSla",
+  "interface": "eth0",
+  "quota_gb": 1000,
+  "reset_day": 7,
+  "timezone": "Asia/Shanghai",
+  "initial_used_gb": 0,
+  "traffic_mode": "total",
+  "thresholds": [70, 80, 90, 95, 100],
+  "notify_cycle_reset": true,
+  "telegram": {
+    "bot_token": "123456789:replace-with-your-token",
+    "chat_id": "replace-with-your-chat-id"
+  }
+}
