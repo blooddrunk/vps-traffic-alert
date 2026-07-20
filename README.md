@@ -17,7 +17,8 @@
 - 支持当前周期初始已用流量，避免中途安装造成少算
 - 使用 systemd timer 每 15 分钟检查一次
 - 无第三方 Python 包依赖
-- 提供配置、启用、禁用、检查、日志、更新和卸载命令
+- 无参数运行时显示交互式快捷菜单
+- 保留完整子命令，适合自动化和脚本调用
 
 ## 支持环境
 
@@ -42,6 +43,39 @@ curl -fsSL https://raw.githubusercontent.com/blooddrunk/vps-traffic-alert/main/i
 
 > 使用 `curl | sudo bash` 时，交互输入会从 `/dev/tty` 读取。
 
+## 快捷菜单
+
+安装完成后直接运行：
+
+```bash
+vps-traffic-alert
+```
+
+普通用户运行时，程序会自动通过 `sudo` 重新打开菜单。也可以显式运行：
+
+```bash
+sudo vps-traffic-alert menu
+```
+
+菜单包含：
+
+```text
+  1) View current traffic status
+  2) Check traffic now
+  3) Test Telegram notification
+  4) Configure monitoring
+  5) Enable automatic checks
+  6) Disable automatic checks
+  7) View recent logs
+  8) Show configuration
+  9) Reset current cycle state
+ 10) Update from GitHub
+ 11) Uninstall
+  0) Exit
+```
+
+每次操作完成后会返回主菜单。原有命令行子命令仍然可用。
+
 ## 常用命令
 
 ```bash
@@ -57,6 +91,20 @@ sudo vps-traffic-alert reset         # 重置本地账单周期状态
 sudo vps-traffic-alert update        # 从 GitHub 更新
 sudo vps-traffic-alert uninstall     # 卸载，保留配置和状态
 sudo vps-traffic-alert uninstall --purge  # 完全卸载
+```
+
+## 已安装用户升级
+
+旧版本用户执行：
+
+```bash
+sudo vps-traffic-alert update
+```
+
+然后直接运行：
+
+```bash
+vps-traffic-alert
 ```
 
 ## 三台 VPS 的配置参考
