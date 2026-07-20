@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROGRAM="vps-traffic-alert"
-VERSION="0.1.0"
+VERSION="0.2.0"
 CONFIG_DIR="/etc/vps-traffic-alert"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 STATE_DIR="/var/lib/vps-traffic-alert"
@@ -54,7 +54,7 @@ detect_timezone() {
 }
 
 parse_size_to_gb() {
-  python3 - "$1" <<'PY'
+  python3 - "$1" <<'PY_SIZE'
 import re, sys
 raw = sys.argv[1].strip().upper().replace(" ", "")
 match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(GB|TB)?", raw)
@@ -62,7 +62,7 @@ if not match: raise SystemExit(1)
 value = float(match.group(1)) * (1000 if match.group(2) == "TB" else 1)
 if value < 0: raise SystemExit(1)
 print(f"{value:.6f}".rstrip("0").rstrip("."))
-PY
+PY_SIZE
 }
 
 validate_timezone() { [[ "$1" != /* && "$1" != *".."* && -f "/usr/share/zoneinfo/$1" ]]; }
@@ -70,7 +70,7 @@ validate_timezone() { [[ "$1" != /* && "$1" != *".."* && -f "/usr/share/zoneinfo
 read_existing_value() {
   local key="$1" fallback="$2"
   [[ -f "$CONFIG_FILE" ]] || { printf '%s' "$fallback"; return; }
-  python3 - "$CONFIG_FILE" "$key" "$fallback" <<'PY'
+  python3 - "$CONFIG_FILE" "$key" "$fallback" <<'PY_READ'
 import json, sys
 path, key, fallback = sys.argv[1:]
 try:
@@ -78,12 +78,12 @@ try:
     for part in key.split("."): value = value[part]
     print(",".join(map(str, value)) if isinstance(value, list) else value)
 except Exception: print(fallback)
-PY
+PY_READ
 }
 
 write_config() {
   install -d -m 700 "$CONFIG_DIR"
-  SERVER_NAME="$1" INTERFACE="$2" QUOTA_GB="$3" RESET_DAY="$4" TIMEZONE_NAME="$5" INITIAL_USED_GB="$6" THRESHOLDS="$7" BOT_TOKEN="$8" CHAT_ID="$9" CONFIG_FILE="$CONFIG_FILE" python3 <<'PY'
+  SERVER_NAME="$1" INTERFACE="$2" QUOTA_GB="$3" RESET_DAY="$4" TIMEZONE_NAME="$5" INITIAL_USED_GB="$6" THRESHOLDS="$7" BOT_TOKEN="$8" CHAT_ID="$9" CONFIG_FILE="$CONFIG_FILE" python3 <<'PY_CONFIG'
 import json, os, tempfile
 config = {
   "server_name": os.environ["SERVER_NAME"], "interface": os.environ["INTERFACE"],
@@ -101,7 +101,7 @@ try:
     os.chmod(temporary, 0o600); os.replace(temporary, path)
 finally:
     if os.path.exists(temporary): os.unlink(temporary)
-PY
+PY_CONFIG
 }
 
 cmd_configure() {
@@ -146,22 +146,24 @@ cmd_enable() { require_root enable; require_installed; systemctl daemon-reload; 
 cmd_disable() { require_root disable; systemctl disable --now "$TIMER" 2>/dev/null || true; say "Disabled $TIMER"; }
 cmd_logs() { journalctl -u "$SERVICE" -n 100 --no-pager; }
 cmd_reset() { require_root reset; [[ -f "$STATE_DIR/state.json" ]] || { say "No traffic state exists"; return; }; confirm "Delete current traffic state?" n && { rm -f "$STATE_DIR/state.json" "$STATE_DIR/lock"; say "Traffic state deleted"; } || say "Cancelled"; }
-cmd_show_config() { require_installed; python3 - "$CONFIG_FILE" <<'PY'
+cmd_show_config() { require_installed; python3 - "$CONFIG_FILE" <<'PY_SHOW'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle: config=json.load(handle)
 token=config.get("telegram",{}).get("bot_token","")
 if token: config["telegram"]["bot_token"] = token[:4]+"..."+token[-4:] if len(token)>8 else "***"
 print(json.dumps(config, indent=2, ensure_ascii=False))
-PY
+PY_SHOW
 }
 cmd_update() { require_root update; curl -fsSL "$RAW_BASE/install.sh" | bash -s -- --update-only; }
 cmd_uninstall() { require_root uninstall; local purge="${1:-}"; confirm "Uninstall VPS Traffic Alert?" n || { say "Cancelled"; return; }; systemctl disable --now "$TIMER" 2>/dev/null || true; rm -f "/etc/systemd/system/$SERVICE" "/etc/systemd/system/$TIMER"; systemctl daemon-reload; rm -rf /usr/local/lib/vps-traffic-alert; rm -f /usr/local/bin/vps-traffic-alert; if [[ "$purge" == --purge ]]; then rm -rf "$CONFIG_DIR" "$STATE_DIR"; say "Program, configuration, and state removed"; else say "Program removed; configuration and state preserved"; fi; }
 
 usage() {
-  cat <<EOF
+  cat <<EOF_USAGE
 $PROGRAM $VERSION
 
 Usage:
+  $PROGRAM                       Open the interactive menu
+  $PROGRAM menu                  Open the interactive menu
   $PROGRAM configure
   $PROGRAM status
   $PROGRAM check
@@ -174,11 +176,117 @@ Usage:
   $PROGRAM update
   $PROGRAM uninstall [--purge]
   $PROGRAM version
-EOF
+EOF_USAGE
 }
 
-command_name="${1:-help}"; shift || true
+menu_clear() {
+  if [[ -t 1 && -n "${TERM:-}" ]] && command -v clear >/dev/null 2>&1; then
+    clear
+  fi
+}
+
+menu_pause() {
+  local ignored
+  say ""
+  read -r -p "Press Enter to return to the menu..." ignored || true
+}
+
+menu_run() {
+  local title="$1"
+  shift
+  say ""
+  say "===== $title ====="
+  if ! ( "$@" ); then
+    say ""
+    say "The command failed. Review the message above."
+  fi
+  menu_pause
+}
+
+menu_header() {
+  local enabled active
+  enabled=$(systemctl is-enabled "$TIMER" 2>/dev/null || true)
+  active=$(systemctl is-active "$TIMER" 2>/dev/null || true)
+
+  say "========================================"
+  say " VPS Traffic Alert $VERSION"
+  say "========================================"
+  say " Timer: ${enabled:-unknown} / ${active:-unknown}"
+  say ""
+  say "  1) View current traffic status"
+  say "  2) Check traffic now"
+  say "  3) Test Telegram notification"
+  say "  4) Configure monitoring"
+  say "  5) Enable automatic checks"
+  say "  6) Disable automatic checks"
+  say "  7) View recent logs"
+  say "  8) Show configuration"
+  say "  9) Reset current cycle state"
+  say " 10) Update from GitHub"
+  say " 11) Uninstall"
+  say "  0) Exit"
+  say ""
+}
+
+ensure_menu_root() {
+  if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+    command -v sudo >/dev/null 2>&1 || fail "The interactive menu requires root. Run: su -c '$PROGRAM menu'"
+    exec sudo -- "$0" menu
+  fi
+}
+
+interactive_menu() {
+  ensure_menu_root
+  local choice
+
+  while true; do
+    menu_clear
+    menu_header
+    if ! read -r -p "Select an option [0-11]: " choice; then
+      say ""
+      break
+    fi
+
+    case "$choice" in
+      1) menu_run "Current traffic status" cmd_status ;;
+      2) menu_run "Check traffic now" cmd_check ;;
+      3) menu_run "Telegram notification test" cmd_test ;;
+      4) menu_run "Configure monitoring" cmd_configure ;;
+      5) menu_run "Enable automatic checks" cmd_enable ;;
+      6) menu_run "Disable automatic checks" cmd_disable ;;
+      7) menu_run "Recent logs" cmd_logs ;;
+      8) menu_run "Configuration" cmd_show_config ;;
+      9) menu_run "Reset current cycle state" cmd_reset ;;
+      10) menu_run "Update from GitHub" cmd_update ;;
+      11)
+        say ""
+        if ( cmd_uninstall ); then
+          if [[ ! -x /usr/local/bin/vps-traffic-alert ]]; then
+            break
+          fi
+        else
+          say "The uninstall command failed."
+        fi
+        menu_pause
+        ;;
+      0|q|Q|exit|quit) break ;;
+      *) say "Invalid option: $choice"; menu_pause ;;
+    esac
+  done
+}
+
+if [[ $# -eq 0 ]]; then
+  if [[ -t 0 && -t 1 ]]; then
+    interactive_menu
+  else
+    usage
+  fi
+  exit 0
+fi
+
+command_name="$1"; shift
 case "$command_name" in
+  menu) interactive_menu ;;
   configure) cmd_configure "$@" ;; status) cmd_status "$@" ;; check) cmd_check "$@" ;;
   test) cmd_test "$@" ;; enable) cmd_enable "$@" ;; disable) cmd_disable "$@" ;;
   logs) cmd_logs "$@" ;; show-config) cmd_show_config "$@" ;; reset) cmd_reset "$@" ;;
