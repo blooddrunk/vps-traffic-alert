@@ -1,0 +1,12 @@
+[Unit]
+Description=Run VPS traffic billing-cycle check every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+AccuracySec=1min
+RandomizedDelaySec=30s
+Unit=vps-traffic-alert.service
+
+[Install]
+WantedBy=timers.target
