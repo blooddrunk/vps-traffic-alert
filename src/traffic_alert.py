@@ -394,6 +394,10 @@ def run_check(config: dict[str, Any]) -> str:
                 + make_summary(config, cycle_start, cycle_end, used_bytes),
             )
             alerted.add(threshold)
+            # Persist immediately so a later notification failure cannot cause
+            # this successfully sent threshold to be repeated next time.
+            state["alerted"] = sorted(alerted)
+            save_json_atomic(STATE_PATH, state)
 
     state["alerted"] = sorted(alerted)
     save_json_atomic(STATE_PATH, state)
