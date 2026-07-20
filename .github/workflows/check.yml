@@ -1,0 +1,17 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: bash -n install.sh vps-traffic-alert
+      - name: Check Python syntax
+        run: python3 -m py_compile src/traffic_alert.py
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
