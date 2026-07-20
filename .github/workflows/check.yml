@@ -11,6 +11,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check shell syntax
         run: bash -n install.sh vps-traffic-alert
+      - name: Check management command
+        run: |
+          ./vps-traffic-alert version
+          ./vps-traffic-alert --help
       - name: Check Python syntax
         run: python3 -m py_compile src/traffic_alert.py
       - name: Run unit tests
