@@ -1,0 +1,22 @@
+[Unit]
+Description=VPS traffic billing-cycle check
+Documentation=https://github.com/blooddrunk/vps-traffic-alert
+After=network-online.target vnstat.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/vps-traffic-alert/traffic_alert.py check
+User=root
+Group=root
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/vps-traffic-alert
+ReadWritePaths=/var/lib/vps-traffic-alert
+
+[Install]
+WantedBy=multi-user.target
