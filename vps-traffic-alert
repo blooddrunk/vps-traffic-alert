@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROGRAM="vps-traffic-alert"
+VERSION="0.1.0"
+CONFIG_DIR="/etc/vps-traffic-alert"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+STATE_DIR="/var/lib/vps-traffic-alert"
+ENGINE="/usr/local/lib/vps-traffic-alert/traffic_alert.py"
+SERVICE="vps-traffic-alert.service"
+TIMER="vps-traffic-alert.timer"
+RAW_BASE="https://raw.githubusercontent.com/blooddrunk/vps-traffic-alert/main"
+
+say() { printf '%s\n' "$*"; }
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+require_root() { [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "This command must be run as root. Try: sudo $PROGRAM $*"; }
+require_installed() { [[ -f "$ENGINE" ]] || fail "The monitor engine is not installed"; [[ -f "$CONFIG_FILE" ]] || fail "Not configured. Run: sudo $PROGRAM configure"; }
+
+prompt() {
+  local label="$1" default_value="${2:-}" answer
+  if [[ -n "$default_value" ]]; then
+    read -r -p "$label [$default_value]: " answer
+    printf '%s' "${answer:-$default_value}"
+  else
+    read -r -p "$label: " answer
+    printf '%s' "$answer"
+  fi
+}
+
+prompt_secret() { local answer; read -r -s -p "$1: " answer; printf '\n' >&2; printf '%s' "$answer"; }
+
+confirm() {
+  local label="$1" default_answer="${2:-n}" answer
+  if [[ "$default_answer" == "y" ]]; then
+    read -r -p "$label [Y/n]: " answer; answer="${answer:-y}"
+  else
+    read -r -p "$label [y/N]: " answer; answer="${answer:-n}"
+  fi
+  [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+detect_interface() {
+  local interface
+  interface=$(ip -o route show to default 2>/dev/null | awk '{print $5; exit}')
+  [[ -n "$interface" ]] || interface=$(ip -o -4 addr show scope global 2>/dev/null | awk '{print $2; exit}')
+  printf '%s' "${interface:-eth0}"
+}
+
+detect_timezone() {
+  local timezone=""
+  command -v timedatectl >/dev/null 2>&1 && timezone=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+  [[ -n "$timezone" || ! -f /etc/timezone ]] || timezone=$(tr -d '[:space:]' < /etc/timezone)
+  printf '%s' "${timezone:-UTC}"
+}
+
+parse_size_to_gb() {
+  python3 - "$1" <<'PY'
+import re, sys
+raw = sys.argv[1].strip().upper().replace(" ", "")
+match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(GB|TB)?", raw)
+if not match: raise SystemExit(1)
+value = float(match.group(1)) * (1000 if match.group(2) == "TB" else 1)
+if value < 0: raise SystemExit(1)
+print(f"{value:.6f}".rstrip("0").rstrip("."))
+PY
+}
+
+validate_timezone() { [[ "$1" != /* && "$1" != *".."* && -f "/usr/share/zoneinfo/$1" ]]; }
+
+read_existing_value() {
+  local key="$1" fallback="$2"
+  [[ -f "$CONFIG_FILE" ]] || { printf '%s' "$fallback"; return; }
+  python3 - "$CONFIG_FILE" "$key" "$fallback" <<'PY'
+import json, sys
+path, key, fallback = sys.argv[1:]
+try:
+    with open(path, encoding="utf-8") as handle: value = json.load(handle)
+    for part in key.split("."): value = value[part]
+    print(",".join(map(str, value)) if isinstance(value, list) else value)
+except Exception: print(fallback)
+PY
+}
+
+write_config() {
+  install -d -m 700 "$CONFIG_DIR"
+  SERVER_NAME="$1" INTERFACE="$2" QUOTA_GB="$3" RESET_DAY="$4" TIMEZONE_NAME="$5" INITIAL_USED_GB="$6" THRESHOLDS="$7" BOT_TOKEN="$8" CHAT_ID="$9" CONFIG_FILE="$CONFIG_FILE" python3 <<'PY'
+import json, os, tempfile
+config = {
+  "server_name": os.environ["SERVER_NAME"], "interface": os.environ["INTERFACE"],
+  "quota_gb": float(os.environ["QUOTA_GB"]), "reset_day": int(os.environ["RESET_DAY"]),
+  "timezone": os.environ["TIMEZONE_NAME"], "initial_used_gb": float(os.environ["INITIAL_USED_GB"]),
+  "traffic_mode": "total", "thresholds": sorted({int(x) for x in os.environ["THRESHOLDS"].split(",")}),
+  "notify_cycle_reset": True,
+  "telegram": {"bot_token": os.environ["BOT_TOKEN"], "chat_id": os.environ["CHAT_ID"]}
+}
+path = os.environ["CONFIG_FILE"]
+fd, temporary = tempfile.mkstemp(prefix=".config.", dir=os.path.dirname(path), text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2, ensure_ascii=False); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600); os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary): os.unlink(temporary)
+PY
+}
+
+cmd_configure() {
+  require_root configure
+  command -v vnstat >/dev/null 2>&1 || fail "vnstat is not installed"
+  local server_name interface quota_input quota_gb reset_day timezone initial_input initial_used_gb thresholds bot_token chat_id
+  local default_name default_interface default_quota default_reset default_timezone default_initial default_thresholds default_token default_chat
+  default_name=$(read_existing_value server_name "$(hostname -s)")
+  default_interface=$(read_existing_value interface "$(detect_interface)")
+  default_quota=$(read_existing_value quota_gb 1000)
+  default_reset=$(read_existing_value reset_day 1)
+  default_timezone=$(read_existing_value timezone "$(detect_timezone)")
+  default_initial=$(read_existing_value initial_used_gb 0)
+  default_thresholds=$(read_existing_value thresholds 70,80,90,95,100)
+  default_token=$(read_existing_value telegram.bot_token "")
+  default_chat=$(read_existing_value telegram.chat_id "")
+
+  say "Configure VPS traffic monitoring"; say "Traffic mode is RX + TX. Sizes use decimal GB/TB."; say ""
+  server_name=$(prompt "Server name" "$default_name")
+  interface=$(prompt "Public network interface" "$default_interface")
+  ip link show "$interface" >/dev/null 2>&1 || fail "Network interface not found: $interface"
+  while true; do quota_input=$(prompt "Monthly quota, for example 300GB or 5.9TB" "${default_quota}GB"); quota_gb=$(parse_size_to_gb "$quota_input" 2>/dev/null) && [[ "$quota_gb" != 0 ]] && break; say "Invalid size"; done
+  while true; do reset_day=$(prompt "Billing cycle reset day (1-31)" "$default_reset"); [[ "$reset_day" =~ ^[0-9]+$ ]] && ((reset_day>=1 && reset_day<=31)) && break; say "Invalid reset day"; done
+  while true; do timezone=$(prompt "Billing timezone, for example Asia/Shanghai" "$default_timezone"); validate_timezone "$timezone" && break; say "Unknown IANA timezone"; done
+  while true; do initial_input=$(prompt "Traffic already used in the current cycle" "${default_initial}GB"); initial_used_gb=$(parse_size_to_gb "$initial_input" 2>/dev/null) && break; say "Invalid size"; done
+  while true; do thresholds=$(prompt "Alert thresholds, comma separated" "$default_thresholds"); [[ "$thresholds" =~ ^[0-9]+(,[0-9]+)*$ ]] && break; say "Use comma-separated integers"; done
+  if [[ -n "$default_token" ]] && confirm "Keep the existing Telegram bot token?" y; then bot_token="$default_token"; else bot_token=$(prompt_secret "Telegram bot token"); fi
+  [[ -n "$bot_token" ]] || fail "Telegram bot token cannot be empty"
+  chat_id=$(prompt "Telegram chat ID" "$default_chat"); [[ -n "$chat_id" ]] || fail "Telegram chat ID cannot be empty"
+  write_config "$server_name" "$interface" "$quota_gb" "$reset_day" "$timezone" "$initial_used_gb" "$thresholds" "$bot_token" "$chat_id"
+  python3 "$ENGINE" validate-config
+  systemctl daemon-reload
+  say "Configuration saved to $CONFIG_FILE"
+  [[ ! -f "$STATE_DIR/state.json" ]] || say "Existing state preserved. Run '$PROGRAM reset' if cycle settings changed."
+  confirm "Send a Telegram test message now?" y && python3 "$ENGINE" test || true
+}
+
+cmd_status() { require_installed; say "Timer enabled: $(systemctl is-enabled "$TIMER" 2>/dev/null || true)"; say "Timer active:  $(systemctl is-active "$TIMER" 2>/dev/null || true)"; say ""; python3 "$ENGINE" status; say ""; systemctl list-timers "$TIMER" --no-pager 2>/dev/null || true; }
+cmd_check() { require_root check; require_installed; python3 "$ENGINE" check; }
+cmd_test() { require_installed; python3 "$ENGINE" test; }
+cmd_enable() { require_root enable; require_installed; systemctl daemon-reload; systemctl enable --now "$TIMER"; say "Enabled $TIMER"; }
+cmd_disable() { require_root disable; systemctl disable --now "$TIMER" 2>/dev/null || true; say "Disabled $TIMER"; }
+cmd_logs() { journalctl -u "$SERVICE" -n 100 --no-pager; }
+cmd_reset() { require_root reset; [[ -f "$STATE_DIR/state.json" ]] || { say "No traffic state exists"; return; }; confirm "Delete current traffic state?" n && { rm -f "$STATE_DIR/state.json" "$STATE_DIR/lock"; say "Traffic state deleted"; } || say "Cancelled"; }
+cmd_show_config() { require_installed; python3 - "$CONFIG_FILE" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle: config=json.load(handle)
+token=config.get("telegram",{}).get("bot_token","")
+if token: config["telegram"]["bot_token"] = token[:4]+"..."+token[-4:] if len(token)>8 else "***"
+print(json.dumps(config, indent=2, ensure_ascii=False))
+PY
+}
+cmd_update() { require_root update; curl -fsSL "$RAW_BASE/install.sh" | bash -s -- --update-only; }
+cmd_uninstall() { require_root uninstall; local purge="${1:-}"; confirm "Uninstall VPS Traffic Alert?" n || { say "Cancelled"; return; }; systemctl disable --now "$TIMER" 2>/dev/null || true; rm -f "/etc/systemd/system/$SERVICE" "/etc/systemd/system/$TIMER"; systemctl daemon-reload; rm -rf /usr/local/lib/vps-traffic-alert; rm -f /usr/local/bin/vps-traffic-alert; if [[ "$purge" == --purge ]]; then rm -rf "$CONFIG_DIR" "$STATE_DIR"; say "Program, configuration, and state removed"; else say "Program removed; configuration and state preserved"; fi; }
+
+usage() {
+  cat <<EOF
+$PROGRAM $VERSION
+
+Usage:
+  $PROGRAM configure
+  $PROGRAM status
+  $PROGRAM check
+  $PROGRAM test
+  $PROGRAM enable
+  $PROGRAM disable
+  $PROGRAM logs
+  $PROGRAM show-config
+  $PROGRAM reset
+  $PROGRAM update
+  $PROGRAM uninstall [--purge]
+  $PROGRAM version
+EOF
+}
+
+command_name="${1:-help}"; shift || true
+case "$command_name" in
+  configure) cmd_configure "$@" ;; status) cmd_status "$@" ;; check) cmd_check "$@" ;;
+  test) cmd_test "$@" ;; enable) cmd_enable "$@" ;; disable) cmd_disable "$@" ;;
+  logs) cmd_logs "$@" ;; show-config) cmd_show_config "$@" ;; reset) cmd_reset "$@" ;;
+  update) cmd_update "$@" ;; uninstall) cmd_uninstall "$@" ;; version) say "$VERSION" ;;
+  help|-h|--help) usage ;; *) usage; fail "Unknown command: $command_name" ;;
+esac
