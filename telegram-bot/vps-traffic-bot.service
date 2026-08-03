@@ -11,7 +11,7 @@ ExecStart=/opt/vps-traffic-bot/venv/bin/python /opt/vps-traffic-bot/bot.py --con
 Restart=on-failure
 PrivateTmp=true
 NoNewPrivileges=true
-StateDirectory=vps-traffic-bot
+StateDirectory=vps-traffic-alert
 StateDirectoryMode=0750
 
 [Install]

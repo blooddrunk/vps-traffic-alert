@@ -23,6 +23,7 @@ from telegram.ext import (
 )
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_HISTORY_PATH = "/var/lib/vps-traffic-alert/history.jsonl"
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ class Controller:
         if not self.servers:
             raise ControllerError("At least one server must be configured")
         self.history_path = Path(
-            config.get("history_path", "/var/lib/vps-traffic-bot/history.jsonl")
+            config.get("history_path", DEFAULT_HISTORY_PATH)
         )
 
     def server(self, name: str) -> Server:
@@ -83,8 +84,15 @@ class Controller:
         return results
 
     def append_history(self, payload: dict[str, Any]) -> None:
+        snapshot_date = date.today()
+        timestamp = payload.get("timestamp")
+        if isinstance(timestamp, str):
+            try:
+                snapshot_date = date.fromisoformat(timestamp[:10])
+            except ValueError:
+                LOGGER.warning("Ignoring invalid status timestamp: %s", timestamp)
         record = {
-            "date": date.today().isoformat(),
+            "date": snapshot_date.isoformat(),
             "server": payload["server"]["name"],
             "used_gb": payload["traffic"]["used_gb"],
         }
@@ -101,7 +109,12 @@ class Controller:
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if item.get("server") == server_name:
+            if (
+                isinstance(item, dict)
+                and item.get("server") == server_name
+                and isinstance(item.get("date"), str)
+                and isinstance(item.get("used_gb"), (int, float))
+            ):
                 records[item["date"]] = item
         return sorted(records.values(), key=lambda item: item["date"])[-days:]
 
@@ -144,6 +157,12 @@ def format_report(
             lines.append("Today: no previous snapshot" if delta is None else f"Today: +{delta:g}GB")
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+def traffic_delta(current_used_gb: float, previous_used_gb: float) -> float:
+    """Return usage since the previous snapshot, including a cycle reset."""
+    delta = current_used_gb - previous_used_gb
+    return current_used_gb if delta < 0 else delta
 
 
 def main_keyboard() -> InlineKeyboardMarkup:
@@ -224,14 +243,15 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Usage: /history SERVER")
         return
     name = " ".join(context.args)
-    records = context.bot_data["controller"].history(name)
+    records = context.bot_data["controller"].history(name, days=8)
     if len(records) < 2:
         await update.message.reply_text(f"Not enough history for {name} yet.")
         return
     lines = [f"{name} — last 7 days", ""]
     previous = records[0]
     for item in records[1:]:
-        lines.append(f"{item['date']} +{max(0, item['used_gb'] - previous['used_gb']):g}GB")
+        delta = traffic_delta(item["used_gb"], previous["used_gb"])
+        lines.append(f"{item['date']} +{delta:g}GB")
         previous = item
     await update.message.reply_text("\n".join(lines))
 
@@ -293,8 +313,8 @@ async def send_daily(config: dict[str, Any], controller: Controller, token: str)
         if isinstance(result, dict):
             history = controller.history(server.name, days=1)
             if history:
-                deltas[server.name] = max(
-                    0, result["traffic"]["used_gb"] - history[-1]["used_gb"]
+                deltas[server.name] = traffic_delta(
+                    result["traffic"]["used_gb"], history[-1]["used_gb"]
                 )
             controller.append_history(result)
     async with application.bot:

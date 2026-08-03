@@ -121,12 +121,15 @@ sudo vps-traffic-alert uninstall --purge  # 完全卸载
 - `/start` 内联操作菜单和 VPS 列表
 - `/status NoSla` 即时查询
 - 每天 09:00 的 systemd timer 聚合报告
-- `/history NoSla` 最近七次日报流量增量
+- `/history NoSla` 最近七天日报流量增量
 - `/chatid` 显示需要加入白名单的 Telegram Chat ID
 
 控制器是唯一需要 `python-telegram-bot` 的组件。Bot Token 从环境变量读取，示例
 配置中不包含密钥。若只将 VPS 用作 agent，可以省略 `telegram` 配置；原有独立
 Telegram 阈值通知配置仍完全兼容。
+
+首次配置仅作为 agent 使用的 VPS 时，在配置流程中对可选的 Telegram 阈值通知
+选择 `N` 即可，不需要填写 Bot Token 或 Chat ID；控制器仍可通过 SSH 查询该 VPS。
 
 ## 已安装用户升级
 

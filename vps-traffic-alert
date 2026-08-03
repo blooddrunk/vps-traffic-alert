@@ -128,15 +128,27 @@ cmd_configure() {
   while true; do timezone=$(prompt "Billing timezone, for example Asia/Shanghai" "$default_timezone"); validate_timezone "$timezone" && break; say "Unknown IANA timezone"; done
   while true; do initial_input=$(prompt "Traffic already used in the current cycle" "${default_initial}GB"); initial_used_gb=$(parse_size_to_gb "$initial_input" 2>/dev/null) && break; say "Invalid size"; done
   while true; do thresholds=$(prompt "Alert thresholds, comma separated" "$default_thresholds"); [[ "$thresholds" =~ ^[0-9]+(,[0-9]+)*$ ]] && break; say "Use comma-separated integers"; done
-  if [[ -n "$default_token" ]] && confirm "Keep the existing Telegram bot token?" y; then bot_token="$default_token"; else bot_token=$(prompt_secret "Telegram bot token"); fi
-  [[ -n "$bot_token" ]] || fail "Telegram bot token cannot be empty"
-  chat_id=$(prompt "Telegram chat ID" "$default_chat"); [[ -n "$chat_id" ]] || fail "Telegram chat ID cannot be empty"
+  bot_token=""
+  chat_id=""
+  if [[ -n "$default_token" && -n "$default_chat" ]] && confirm "Keep the existing Telegram bot token?" y; then
+    bot_token="$default_token"
+    chat_id="$default_chat"
+  elif confirm "Configure optional Telegram threshold notifications on this agent?" n; then
+    bot_token=$(prompt_secret "Telegram bot token")
+    [[ -n "$bot_token" ]] || fail "Telegram bot token cannot be empty"
+    chat_id=$(prompt "Telegram chat ID" "$default_chat")
+    [[ -n "$chat_id" ]] || fail "Telegram chat ID cannot be empty"
+  else
+    say "Skipping agent Telegram notifications; a controller can query this VPS over SSH."
+  fi
   write_config "$server_name" "$interface" "$quota_gb" "$reset_day" "$timezone" "$initial_used_gb" "$thresholds" "$bot_token" "$chat_id"
   python3 "$ENGINE" validate-config
   systemctl daemon-reload
   say "Configuration saved to $CONFIG_FILE"
   [[ ! -f "$STATE_DIR/state.json" ]] || say "Existing state preserved. Run '$PROGRAM reset' if cycle settings changed."
-  confirm "Send a Telegram test message now?" y && python3 "$ENGINE" test || true
+  if [[ -n "$bot_token" ]]; then
+    confirm "Send a Telegram test message now?" y && python3 "$ENGINE" test || true
+  fi
 }
 
 cmd_status() {

@@ -8,6 +8,10 @@ ports and need no controller credentials.
 > Telegram commands work only after one machine has been configured to run this
 > controller continuously. Do not run a controller on every VPS.
 
+On a monitored VPS that is used only as an agent, the interactive configuration can
+skip the optional Telegram threshold-notification credentials. The controller then
+uses SSH and `status --json`; no Telegram token is stored on that VPS.
+
 ## Why `/start` does nothing
 
 The agent's original threshold notifications only call Telegram's `sendMessage`
@@ -45,7 +49,7 @@ connection from the controller to that agent:
 {
   "token_env": "VPS_TRAFFIC_BOT_TOKEN",
   "allowed_chat_ids": [123456789],
-  "history_path": "/var/lib/vps-traffic-bot/history.jsonl",
+  "history_path": "/var/lib/vps-traffic-alert/history.jsonl",
   "servers": [
     {"name": "NoSla", "host": "1.2.3.4", "user": "root"}
   ]
@@ -100,8 +104,8 @@ not the desired report time.
   `NoSla`. Names containing spaces are supported.
 - `/report` — query every VPS and display the current aggregate report. This does
   not write a daily history snapshot.
-- `/history NoSla` — show changes between the latest seven daily snapshots. At
-  least two successful scheduled reports are required before a delta is shown.
+- `/history NoSla` — show the latest seven daily traffic increments. At least
+  two successful scheduled reports are required before a delta is shown.
 - `/chatid` — show the current numeric chat ID; useful during initial setup.
 
 The bot registers these commands with Telegram when the service starts, so they

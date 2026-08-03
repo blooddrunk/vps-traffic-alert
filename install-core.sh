@@ -76,9 +76,13 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
-needle = '''  confirm "Send a Telegram test message now?" y && python3 "$ENGINE" test || true
+needle = '''  if [[ -n "$bot_token" ]]; then
+    confirm "Send a Telegram test message now?" y && python3 "$ENGINE" test || true
+  fi
 }'''
-replacement = '''  confirm "Send a Telegram test message now?" y && python3 "$ENGINE" test || true
+replacement = '''  if [[ -n "$bot_token" ]]; then
+    confirm "Send a Telegram test message now?" y && python3 "$ENGINE" test || true
+  fi
 
   if confirm "Enable automatic checks every 15 minutes now?" y; then
     cmd_enable

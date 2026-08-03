@@ -7,5 +7,5 @@ Type=oneshot
 User=vps-traffic-bot
 EnvironmentFile=/etc/vps-traffic-alert/bot.env
 ExecStart=/opt/vps-traffic-bot/venv/bin/python /opt/vps-traffic-bot/bot.py --config /etc/vps-traffic-alert/controller.json --daily-report
-StateDirectory=vps-traffic-bot
+StateDirectory=vps-traffic-alert
 StateDirectoryMode=0750
