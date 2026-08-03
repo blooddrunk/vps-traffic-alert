@@ -107,21 +107,35 @@ sudo systemctl restart vps-traffic-bot.service
 
 ### 4. 验证 SSH 和服务
 
-先核对 agent 的 SSH host key/fingerprint，再以 service 用户测试。第一次连接可能
-会询问是否保存 host key；确认指纹无误后再接受：
+每台 agent 都要先以 controller 的 service 用户建立一次交互式 SSH 连接。确认
+fingerprint 无误后输入 `yes`，不要在这一步使用 `BatchMode`：
 
 ```bash
-sudo -u vps-traffic-bot ssh -o BatchMode=yes \
+sudo -u vps-traffic-bot ssh \
   -p 22 -i /home/vps-traffic-bot/.ssh/id_ed25519 root@1.2.3.4 \
   'vps-traffic-alert status --json'
+```
 
+确认 host key 后，再执行 controller 实际使用的非交互测试：
+
+```bash
+sudo -u vps-traffic-bot ssh -o BatchMode=yes -o ConnectTimeout=10 \
+  -p 22 -i /home/vps-traffic-bot/.ssh/id_ed25519 root@1.2.3.4 \
+  'vps-traffic-alert status --json'
+```
+
+SSH 测试必须输出一个 `schema_version: 1` 的 JSON 对象。controller 使用
+`BatchMode=yes`，不能在 Telegram 查询时回答 host key 提示；如果跳过首次确认，
+Bot 通常会返回 SSH exit status `255`。也可以使用经过核验的 `ssh-keyscan` 预置
+host key，但不要未经核验直接信任扫描结果。
+
+```bash
 sudo systemctl is-active vps-traffic-bot.service
 sudo systemctl is-enabled vps-traffic-report.timer
 ```
 
-SSH 测试必须输出一个 `schema_version: 1` 的 JSON 对象。若要求密码，说明公钥
-或 `authorized_keys` 尚未正确配置；若提示 host key confirmation，先用同一个
-`vps-traffic-bot` 用户完成一次已核对的交互式连接。
+如果要求密码，说明公钥或 `authorized_keys` 尚未正确配置；如果交互式连接无法
+建立，先检查 SSH 用户、端口和 agent 防火墙。
 
 ## 手动安装
 

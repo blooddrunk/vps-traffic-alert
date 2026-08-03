@@ -314,6 +314,21 @@ print_agent_key_instructions() {
   say "请确认 agent 上已安装并配置 vps-traffic-alert，且命令路径为 /usr/local/bin/vps-traffic-alert。"
 }
 
+print_ssh_trust_commands() {
+  local server_file="$1" name host user port identity
+  say ""
+  say "每台 agent 都需要由 controller 用户首次建立一次已核对的 SSH 连接："
+  say "1) 先执行下面的交互式命令（不要加 BatchMode），核对 fingerprint 后输入 yes："
+  while IFS=$'\t' read -r name host user port identity; do
+    say "  [$name] sudo -u $BOT_USER ssh -p $port -i $identity ${user}@${host} 'vps-traffic-alert status --json'"
+  done < "$server_file"
+  say "2) 确认 host key 后，再用 BatchMode 命令验证非交互查询："
+  while IFS=$'\t' read -r name host user port identity; do
+    say "  [$name] sudo -u $BOT_USER ssh -o BatchMode=yes -o ConnectTimeout=10 -p $port -i $identity ${user}@${host} 'vps-traffic-alert status --json'"
+  done < "$server_file"
+  say "如果跳过第 1 步，Telegram 查询通常会返回 SSH exit status 255。"
+}
+
 backup_existing_config() {
   if [[ -f "$CONFIG_FILE" ]]; then
     local backup
@@ -359,10 +374,7 @@ main() {
   write_token_file "$token"
 
   print_agent_key_instructions "$public_key"
-  say ""
-  say "为了避免意外信任错误的主机，请先核对每台 agent 的 SSH host key/fingerprint，再让 controller 用户建立过一次 SSH 连接。"
-  say "连接测试命令示例："
-  say "  sudo -u $BOT_USER ssh -o BatchMode=yes -p 22 -i $CONTROLLER_KEY root@example.com 'vps-traffic-alert status --json'"
+  print_ssh_trust_commands "$servers_file"
 
   systemctl daemon-reload
   if systemctl enable vps-traffic-bot.service && systemctl restart vps-traffic-bot.service; then

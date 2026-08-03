@@ -157,10 +157,31 @@ Telegram 命令机器人。
    ```
 
    向导不会通过 Telegram 或未经确认的远程命令自动修改 agent 的 SSH 配置；这是
-   保留给管理员审核的唯一配对步骤。添加后，用向导输出的 SSH 测试命令验证每台
-   VPS，并先核对主机指纹再接受 host key。
+   保留给管理员审核的唯一配对步骤。
 
-4. 如果安装时没有填写 Chat ID，给 Bot 发送 `/chatid`。把返回的数字写入：
+4. 在每台 agent 上添加公钥后，必须用 `vps-traffic-bot` 用户首次连接一次，建立
+   `known_hosts`。先执行**不带 `BatchMode`** 的命令，核对显示的 fingerprint 后
+   输入 `yes`：
+
+   ```bash
+   sudo -u vps-traffic-bot ssh -p 22 \
+     -i /home/vps-traffic-bot/.ssh/id_ed25519 root@1.2.3.4 \
+     'vps-traffic-alert status --json'
+   ```
+
+   每台 agent 都要执行一次。确认后再验证 controller 的非交互 SSH：
+
+   ```bash
+   sudo -u vps-traffic-bot ssh -o BatchMode=yes -o ConnectTimeout=10 \
+     -p 22 -i /home/vps-traffic-bot/.ssh/id_ed25519 root@1.2.3.4 \
+     'vps-traffic-alert status --json'
+   ```
+
+   controller 使用 `BatchMode=yes`，不能在 Telegram 查询时回答 host key 提示；如果
+   跳过首次确认，Bot 通常会返回 SSH exit status `255`。也可以使用经过核验的
+   `ssh-keyscan` 预置 host key，但不要未经核验直接信任扫描结果。
+
+5. 如果安装时没有填写 Chat ID，给 Bot 发送 `/chatid`。把返回的数字写入：
 
    ```text
    /etc/vps-traffic-alert/controller.json
