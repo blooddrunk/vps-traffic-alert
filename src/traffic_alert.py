@@ -136,7 +136,6 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
         "quota_gb",
         "reset_day",
         "timezone",
-        "telegram",
     ]
     missing = [key for key in required if key not in config]
     if missing:
@@ -178,13 +177,16 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if thresholds[0] <= 0 or thresholds[-1] > 1000:
         raise MonitorError("thresholds must be greater than 0 and at most 1000")
 
-    telegram = config["telegram"]
+    agent = config.get("agent", {})
+    if not isinstance(agent, dict):
+        raise MonitorError("agent must be a JSON object")
+    telegram = config.get("telegram", {})
     if not isinstance(telegram, dict):
         raise MonitorError("telegram must be a JSON object")
     bot_token = str(telegram.get("bot_token", "")).strip()
     chat_id = str(telegram.get("chat_id", "")).strip()
-    if not bot_token or not chat_id:
-        raise MonitorError("telegram.bot_token and telegram.chat_id are required")
+    if bool(bot_token) != bool(chat_id):
+        raise MonitorError("telegram.bot_token and telegram.chat_id must be configured together")
 
     set_process_timezone(timezone_name)
 
@@ -200,6 +202,7 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
             "traffic_mode": traffic_mode,
             "thresholds": thresholds,
             "telegram": {"bot_token": bot_token, "chat_id": chat_id},
+            "agent": {"enabled": bool(agent.get("enabled", True))},
             "notify_cycle_reset": bool(config.get("notify_cycle_reset", True)),
         }
     )
@@ -247,6 +250,8 @@ def read_vnstat(interface: str) -> TrafficCounters:
 
 def send_telegram(config: dict[str, Any], message: str) -> None:
     telegram = config["telegram"]
+    if not telegram.get("bot_token") or not telegram.get("chat_id"):
+        return
     url = f"https://api.telegram.org/bot{telegram['bot_token']}/sendMessage"
     body = urllib.parse.urlencode(
         {
@@ -420,6 +425,69 @@ def run_status(config: dict[str, Any]) -> str:
     return summary
 
 
+def make_status_payload(
+    config: dict[str, Any],
+    now: datetime,
+    cycle_start: date,
+    cycle_end: date,
+    used_bytes: int,
+) -> dict[str, Any]:
+    """Build the stable, machine-readable status document consumed by controllers."""
+    quota_gb = float(config["quota_gb"])
+    used_gb = used_bytes / DECIMAL_GB
+    percent = usage_percent(used_bytes, int(quota_gb * DECIMAL_GB))
+    next_threshold = next(
+        (value for value in config["thresholds"] if value > percent), None
+    )
+    threshold_remaining = (
+        max(0.0, quota_gb * next_threshold / 100 - used_gb)
+        if next_threshold is not None
+        else 0.0
+    )
+
+    def number(value: float) -> int | float:
+        rounded = round(value, 2)
+        return int(rounded) if rounded.is_integer() else rounded
+
+    return {
+        "schema_version": 1,
+        "server": {
+            "name": config["server_name"],
+            "interface": config["interface"],
+        },
+        "billing": {
+            "quota_gb": number(quota_gb),
+            "reset_day": config["reset_day"],
+            "timezone": config["timezone"],
+            "cycle_start": cycle_start.isoformat(),
+            "cycle_end": cycle_end.isoformat(),
+        },
+        "traffic": {
+            "mode": config["traffic_mode"],
+            "used_gb": number(used_gb),
+            "remaining_gb": number(max(0.0, quota_gb - used_gb)),
+            "usage_percent": number(percent),
+        },
+        "threshold": {
+            "next": next_threshold,
+            "remaining_gb": number(threshold_remaining),
+        },
+        "timestamp": now.astimezone().isoformat(timespec="seconds"),
+    }
+
+
+def run_status_json(config: dict[str, Any]) -> dict[str, Any]:
+    now = datetime.now().astimezone()
+    cycle_start, cycle_end = cycle_bounds(now, config["reset_day"])
+    counters = read_vnstat(config["interface"])
+    current_total = counters.selected(config["traffic_mode"])
+    state = load_state_if_present()
+    used_bytes = projected_usage(
+        config, state, current_total, cycle_start.isoformat()
+    )
+    return make_status_payload(config, now, cycle_start, cycle_end, used_bytes)
+
+
 def with_lock(action: Any) -> Any:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("a+", encoding="utf-8") as lock_handle:
@@ -437,6 +505,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["check", "status", "test", "validate-config"],
     )
     parser.add_argument("--config", default=str(CONFIG_PATH))
+    parser.add_argument(
+        "--json", action="store_true", help="emit status as a JSON document"
+    )
     return parser
 
 
@@ -448,11 +519,17 @@ def main() -> int:
         print("Configuration is valid")
         return 0
     if args.command == "test":
+        if not config["telegram"].get("bot_token"):
+            raise MonitorError("Telegram is not configured on this agent")
         send_telegram(config, f"Telegram test succeeded for {config['server_name']}")
         print("Telegram test message sent")
         return 0
     if args.command == "status":
-        print(with_lock(lambda: run_status(config)))
+        if args.json:
+            payload = with_lock(lambda: run_status_json(config))
+            print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        else:
+            print(with_lock(lambda: run_status(config)))
         return 0
     if args.command == "check":
         print(with_lock(lambda: run_check(config)))

@@ -1,0 +1,11 @@
+[Unit]
+Description=Send the daily VPS traffic report
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=vps-traffic-bot
+EnvironmentFile=/etc/vps-traffic-alert/bot.env
+ExecStart=/opt/vps-traffic-bot/venv/bin/python /opt/vps-traffic-bot/bot.py --config /etc/vps-traffic-alert/controller.json --daily-report
+StateDirectory=vps-traffic-bot
+StateDirectoryMode=0750

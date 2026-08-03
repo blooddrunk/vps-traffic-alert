@@ -19,6 +19,8 @@
 - 无第三方 Python 包依赖
 - 无参数运行时显示交互式快捷菜单
 - 保留完整子命令，适合自动化和脚本调用
+- 提供稳定的 JSON 状态接口，可由远程控制器通过 SSH 查询
+- 可选 Telegram 控制器支持多 VPS、内联菜单、日报和七日历史
 
 ## 支持环境
 
@@ -81,6 +83,7 @@ sudo vps-traffic-alert menu
 ```bash
 sudo vps-traffic-alert configure     # 重新配置
 sudo vps-traffic-alert status        # 查看当前周期流量和定时器状态
+sudo vps-traffic-alert status --json # 仅输出机器可读 JSON
 sudo vps-traffic-alert check         # 立即检查一次
 sudo vps-traffic-alert test          # 测试 Telegram 通知
 sudo vps-traffic-alert enable        # 启用自动检查
@@ -92,6 +95,38 @@ sudo vps-traffic-alert update        # 从 GitHub 更新
 sudo vps-traffic-alert uninstall     # 卸载，保留配置和状态
 sudo vps-traffic-alert uninstall --purge  # 完全卸载
 ```
+
+`status --json` 保持 agent 无数据库、无监听端口、无第三方依赖。输出遵循
+`schema_version: 1`，包含服务器、账单周期、流量、下一个阈值以及带时区时间戳：
+
+```json
+{
+  "schema_version": 1,
+  "server": {"name": "NoSla", "interface": "eth0"},
+  "billing": {"quota_gb": 1000, "reset_day": 7, "timezone": "Asia/Shanghai", "cycle_start": "2026-07-07", "cycle_end": "2026-08-07"},
+  "traffic": {"mode": "total", "used_gb": 356.42, "remaining_gb": 643.58, "usage_percent": 35.64},
+  "threshold": {"next": 70, "remaining_gb": 343.58},
+  "timestamp": "2026-08-03T09:00:00+08:00"
+}
+```
+
+## 多 VPS Telegram 控制器
+
+可选控制器位于 [`telegram-bot/`](telegram-bot/README.md)。它通过 SSH 执行
+`vps-traffic-alert status --json`，因此 agent 不开放新端口。控制器提供：
+
+> 仅更新各 VPS 上的 agent 不会启动 Telegram 命令机器人；必须另选一台常在线
+> 主机，按照控制器安装文档运行 `vps-traffic-bot.service`。
+
+- `/start` 内联操作菜单和 VPS 列表
+- `/status NoSla` 即时查询
+- 每天 09:00 的 systemd timer 聚合报告
+- `/history NoSla` 最近七次日报流量增量
+- `/chatid` 显示需要加入白名单的 Telegram Chat ID
+
+控制器是唯一需要 `python-telegram-bot` 的组件。Bot Token 从环境变量读取，示例
+配置中不包含密钥。若只将 VPS 用作 agent，可以省略 `telegram` 配置；原有独立
+Telegram 阈值通知配置仍完全兼容。
 
 ## 已安装用户升级
 

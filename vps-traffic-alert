@@ -139,7 +139,15 @@ cmd_configure() {
   confirm "Send a Telegram test message now?" y && python3 "$ENGINE" test || true
 }
 
-cmd_status() { require_installed; say "Timer enabled: $(systemctl is-enabled "$TIMER" 2>/dev/null || true)"; say "Timer active:  $(systemctl is-active "$TIMER" 2>/dev/null || true)"; say ""; python3 "$ENGINE" status; say ""; systemctl list-timers "$TIMER" --no-pager 2>/dev/null || true; }
+cmd_status() {
+  require_installed
+  if [[ "${1:-}" == "--json" ]]; then
+    [[ $# -eq 1 ]] || fail "Usage: $PROGRAM status [--json]"
+    exec python3 "$ENGINE" status --json
+  fi
+  [[ $# -eq 0 ]] || fail "Usage: $PROGRAM status [--json]"
+  say "Timer enabled: $(systemctl is-enabled "$TIMER" 2>/dev/null || true)"; say "Timer active:  $(systemctl is-active "$TIMER" 2>/dev/null || true)"; say ""; python3 "$ENGINE" status; say ""; systemctl list-timers "$TIMER" --no-pager 2>/dev/null || true
+}
 cmd_check() { require_root check; require_installed; python3 "$ENGINE" check; }
 cmd_test() { require_installed; python3 "$ENGINE" test; }
 cmd_enable() { require_root enable; require_installed; systemctl daemon-reload; systemctl enable --now "$TIMER"; say "Enabled $TIMER"; }
@@ -165,7 +173,7 @@ Usage:
   $PROGRAM                       Open the interactive menu
   $PROGRAM menu                  Open the interactive menu
   $PROGRAM configure
-  $PROGRAM status
+  $PROGRAM status [--json]
   $PROGRAM check
   $PROGRAM test
   $PROGRAM enable
