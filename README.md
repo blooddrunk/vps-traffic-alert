@@ -113,23 +113,77 @@ sudo vps-traffic-alert uninstall --purge  # 完全卸载
 ## 多 VPS Telegram 控制器
 
 可选控制器位于 [`telegram-bot/`](telegram-bot/README.md)。它通过 SSH 执行
-`vps-traffic-alert status --json`，因此 agent 不开放新端口。控制器提供：
+`vps-traffic-alert status --json`，所以 agent 不需要开放新端口。
 
-> 仅更新各 VPS 上的 agent 不会启动 Telegram 命令机器人；必须另选一台常在线
-> 主机，按照控制器安装文档运行 `vps-traffic-bot.service`。
+这里有两个角色：
 
-- `/start` 内联操作菜单和 VPS 列表
-- `/status NoSla` 即时查询
-- 每天 09:00 的 systemd timer 聚合报告
-- `/history NoSla` 最近七天日报流量增量
-- `/chatid` 显示需要加入白名单的 Telegram Chat ID
+| 角色 | 部署位置 | 作用 |
+| --- | --- | --- |
+| agent | 每一台被监控的 VPS | 读取 vnStat、维护账单周期、提供 `status --json` |
+| controller | 一台常在线的 Linux 主机 | 运行 Telegram Bot，通过 SSH 汇总所有 agent |
 
-控制器是唯一需要 `python-telegram-bot` 的组件。Bot Token 从环境变量读取，示例
-配置中不包含密钥。若只将 VPS 用作 agent，可以省略 `telegram` 配置；原有独立
-Telegram 阈值通知配置仍完全兼容。
+同一个 Bot Token 只应运行一个 controller。仅更新各 VPS 上的 agent 不会启动
+Telegram 命令机器人。
 
-首次配置仅作为 agent 使用的 VPS 时，在配置流程中对可选的 Telegram 阈值通知
-选择 `N` 即可，不需要填写 Bot Token 或 Chat ID；控制器仍可通过 SSH 查询该 VPS。
+### 推荐配置流程：控制器主机一键安装
+
+1. 在每台 agent VPS 上安装并配置监控：
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/blooddrunk/vps-traffic-alert/main/install.sh | sudo bash
+   sudo vps-traffic-alert configure
+   ```
+
+   如果这台 VPS 只作为 agent 使用，配置流程最后的“optional Telegram threshold
+   notifications”选择 `N` 即可；controller 通过 SSH 查询，不需要在每台 VPS
+   保存 Bot Token。
+
+2. 选择一台常在线的 Debian/Ubuntu、Fedora/RHEL 或 Arch Linux 主机，在该主机上
+   执行控制器向导：
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/blooddrunk/vps-traffic-alert/main/telegram-bot/install.sh | sudo bash
+   ```
+
+   向导会自动安装 Python/SSH 依赖，创建 `vps-traffic-bot` 专用用户和虚拟环境，
+   生成 controller 专用 SSH 密钥，询问 Bot Token、白名单 Chat ID 和多台 VPS，
+   写入配置并启用 `vps-traffic-bot.service` 与日报 timer。
+
+3. 向导会显示 controller 的公钥和一条受限的 `authorized_keys` 配置。把它添加到
+   每台 agent 的 SSH 用户 `~/.ssh/authorized_keys` 中。该 key 只允许执行：
+
+   ```text
+   /usr/local/bin/vps-traffic-alert status --json
+   ```
+
+   向导不会通过 Telegram 或未经确认的远程命令自动修改 agent 的 SSH 配置；这是
+   保留给管理员审核的唯一配对步骤。添加后，用向导输出的 SSH 测试命令验证每台
+   VPS，并先核对主机指纹再接受 host key。
+
+4. 如果安装时没有填写 Chat ID，给 Bot 发送 `/chatid`。把返回的数字写入：
+
+   ```text
+   /etc/vps-traffic-alert/controller.json
+   ```
+
+   `allowed_chat_ids` 示例：
+
+   ```json
+   "allowed_chat_ids": [123456789, -1001234567890]
+   ```
+
+   然后重启 controller：
+
+   ```bash
+   sudo systemctl restart vps-traffic-bot.service
+   ```
+
+控制器支持 `/start`、`/status`、`/report`、`/history SERVER` 和 `/chatid`。
+完整字段说明、手动安装方式和故障排查见 [`telegram-bot/README.md`](telegram-bot/README.md)。
+
+这里的“一键配置”是 controller 主机上的本地安装向导，不是让 Telegram 消息直接
+执行远程系统管理。Bot 本身不会替用户改 SSH key、systemd、Firewall 或 agent
+配置，因此不会因为一个未经授权的 Telegram 更新而扩大服务器权限。
 
 ## 已安装用户升级
 
@@ -178,12 +232,16 @@ Billing timezone: Etc/GMT+8
 
 请以服务商后台显示的实际额度为准。如果后台写的是 `6000GB`，不要配置成 `5.9TB`。
 
-## Telegram 准备
+## Telegram 准备（仅 agent 阈值通知）
 
 1. 在 Telegram 中联系 `@BotFather` 创建机器人并取得 Bot Token。
 2. 先给机器人发送一条消息。
 3. 获取 Chat ID。
-4. 在安装或 `configure` 时填入 Token 和 Chat ID。
+4. 如果需要这台 agent 自己发送阈值告警，在安装或 `configure` 时填入 Token 和
+   Chat ID；如果只使用多 VPS controller，可在配置流程中选择 `N`。
+
+这组配置是 agent 的单机阈值通知，与多 VPS controller 的 Token/白名单配置相互
+独立。controller 的配置流程见上面的“多 VPS Telegram 控制器”章节。
 
 配置文件权限为 `600`，位置：
 
