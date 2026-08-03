@@ -115,10 +115,14 @@ sudo vps-traffic-alert uninstall --purge  # 完全卸载
 可选控制器位于 [`telegram-bot/`](telegram-bot/README.md)。它通过 SSH 执行
 `vps-traffic-alert status --json`，因此 agent 不开放新端口。控制器提供：
 
+> 仅更新各 VPS 上的 agent 不会启动 Telegram 命令机器人；必须另选一台常在线
+> 主机，按照控制器安装文档运行 `vps-traffic-bot.service`。
+
 - `/start` 内联操作菜单和 VPS 列表
 - `/status NoSla` 即时查询
 - 每天 09:00 的 systemd timer 聚合报告
 - `/history NoSla` 最近七次日报流量增量
+- `/chatid` 显示需要加入白名单的 Telegram Chat ID
 
 控制器是唯一需要 `python-telegram-bot` 的组件。Bot Token 从环境变量读取，示例
 配置中不包含密钥。若只将 VPS 用作 agent，可以省略 `telegram` 配置；原有独立

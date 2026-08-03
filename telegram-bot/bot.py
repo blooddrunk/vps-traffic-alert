@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
@@ -13,13 +14,15 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -42,7 +45,7 @@ class Controller:
         if not self.servers:
             raise ControllerError("At least one server must be configured")
         self.history_path = Path(
-            config.get("history_path", "/var/lib/vps-traffic-alert/history.jsonl")
+            config.get("history_path", "/var/lib/vps-traffic-bot/history.jsonl")
         )
 
     def server(self, name: str) -> Server:
@@ -163,8 +166,32 @@ def authorized(config: dict[str, Any], update: Update) -> bool:
     return bool(update.effective_chat and update.effective_chat.id in allowed)
 
 
+async def reject_unauthorized(update: Update) -> None:
+    """Explain silent command failures and provide the ID needed for configuration."""
+    if update.effective_message and update.effective_chat:
+        await update.effective_message.reply_text(
+            "This chat is not authorized for VPS Traffic Alert.\n"
+            f"Chat ID: {update.effective_chat.id}\n\n"
+            "Add this number to allowed_chat_ids in controller.json, then restart "
+            "vps-traffic-bot.service."
+        )
+
+
+async def chat_id_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    del context
+    if update.effective_message and update.effective_chat:
+        await update.effective_message.reply_text(
+            f"Chat ID: {update.effective_chat.id}"
+        )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if authorized(context.bot_data["config"], update) and update.message:
+    if not authorized(context.bot_data["config"], update):
+        await reject_unauthorized(update)
+        return
+    if update.message:
         await update.message.reply_text(
             "🚀 VPS Traffic Alert\n\nSelect action:", reply_markup=main_keyboard()
         )
@@ -172,6 +199,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(context.bot_data["config"], update) or not update.message:
+        if update.message:
+            await reject_unauthorized(update)
         return
     if context.args:
         try:
@@ -188,6 +217,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(context.bot_data["config"], update) or not update.message:
+        if update.message:
+            await reject_unauthorized(update)
         return
     if not context.args:
         await update.message.reply_text("Usage: /history SERVER")
@@ -203,6 +234,15 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         lines.append(f"{item['date']} +{max(0, item['used_gb'] - previous['used_gb']):g}GB")
         previous = item
     await update.message.reply_text("\n".join(lines))
+
+
+async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not authorized(context.bot_data["config"], update) or not update.message:
+        if update.message:
+            await reject_unauthorized(update)
+        return
+    results = await asyncio.to_thread(context.bot_data["controller"].query_all)
+    await update.message.reply_text(format_report(results))
 
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -222,6 +262,22 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await query.edit_message_text(format_status(payload))
         except ControllerError as exc:
             await query.edit_message_text(f"⚠️ {exc}")
+
+
+async def post_init(application: Application) -> None:
+    await application.bot.set_my_commands([
+        BotCommand("start", "Open the VPS Traffic Alert menu"),
+        BotCommand("status", "Show status; optionally add a server name"),
+        BotCommand("report", "Show the current multi-VPS report"),
+        BotCommand("history", "Show seven-day history for a server"),
+        BotCommand("chatid", "Show this Telegram chat ID"),
+    ])
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    error = context.error
+    error_info = (type(error), error, error.__traceback__) if error else None
+    LOGGER.error("Telegram update failed: %r", update, exc_info=error_info)
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -254,6 +310,10 @@ def main() -> None:
     parser.add_argument("--daily-report", action="store_true")
     args = parser.parse_args()
     config = load_config(args.config)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     token = os.environ.get(config.get("token_env", "VPS_TRAFFIC_BOT_TOKEN"))
     if not token:
         raise SystemExit("Telegram token environment variable is not set")
@@ -261,12 +321,15 @@ def main() -> None:
     if args.daily_report:
         asyncio.run(send_daily(config, controller, token))
         return
-    application = Application.builder().token(token).build()
+    application = Application.builder().token(token).post_init(post_init).build()
     application.bot_data.update(config=config, controller=controller)
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("chatid", chat_id_command))
     application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("report", report_command))
     application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CallbackQueryHandler(callback))
+    application.add_error_handler(error_handler)
     application.run_polling()
 
 
