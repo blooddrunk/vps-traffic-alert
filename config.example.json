@@ -8,6 +8,7 @@
   "traffic_mode": "total",
   "thresholds": [70, 80, 90, 95, 100],
   "notify_cycle_reset": true,
+  "agent": {"enabled": true},
   "telegram": {
     "bot_token": "123456789:replace-with-your-token",
     "chat_id": "replace-with-your-chat-id"

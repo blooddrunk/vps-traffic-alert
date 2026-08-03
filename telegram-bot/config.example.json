@@ -1,0 +1,9 @@
+{
+  "token_env": "VPS_TRAFFIC_BOT_TOKEN",
+  "allowed_chat_ids": [123456789],
+  "history_path": "/var/lib/vps-traffic-alert/history.jsonl",
+  "servers": [
+    {"name": "NoSla", "host": "1.2.3.4", "user": "root"},
+    {"name": "Racknerd", "host": "2.3.4.5", "user": "monitor", "port": 22, "identity_file": "/home/bot/.ssh/id_ed25519"}
+  ]
+}

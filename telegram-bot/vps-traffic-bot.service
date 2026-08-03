@@ -1,0 +1,16 @@
+[Unit]
+Description=VPS Traffic Alert Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vps-traffic-bot
+EnvironmentFile=/etc/vps-traffic-alert/bot.env
+ExecStart=/opt/vps-traffic-bot/venv/bin/python /opt/vps-traffic-bot/bot.py --config /etc/vps-traffic-alert/controller.json
+Restart=on-failure
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Send the daily VPS traffic report at 09:00
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+Unit=vps-traffic-report.service
+
+[Install]
+WantedBy=timers.target
