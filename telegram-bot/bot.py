@@ -123,6 +123,7 @@ def format_status(payload: dict[str, Any]) -> str:
     billing, traffic, threshold = (
         payload["billing"], payload["traffic"], payload["threshold"]
     )
+    reset_time = format_reset_time(billing)
     next_alert = (
         f"{threshold['next']}%\n{threshold['remaining_gb']:g}GB remaining"
         if threshold["next"] is not None else "All configured thresholds reached"
@@ -130,11 +131,17 @@ def format_status(payload: dict[str, Any]) -> str:
     return (
         f"🖥 {payload['server']['name']}\n\n"
         f"Billing cycle:\n{billing['cycle_start']} - {billing['cycle_end']}\n\n"
+        f"Next reset:\n{reset_time}\n\n"
         f"Traffic:\n{traffic['used_gb']:g}GB / {billing['quota_gb']:g}GB\n\n"
         f"Usage:\n{traffic['usage_percent']:g}%\n\n"
         f"Remaining:\n{traffic['remaining_gb']:g}GB\n\n"
         f"Next alert:\n{next_alert}"
     )
+
+
+def format_reset_time(billing: dict[str, Any]) -> str:
+    """Format the next billing-cycle reset in the agent's local timezone."""
+    return f"{billing['cycle_end']} 00:00 ({billing['timezone']})"
 
 
 def format_report(
@@ -151,6 +158,7 @@ def format_report(
             server.name,
             f"{traffic['used_gb']:g}GB / {billing['quota_gb']:g}GB",
             f"{traffic['usage_percent']:g}%",
+            f"Next reset: {format_reset_time(billing)}",
         ]
         if deltas is not None:
             delta = deltas.get(server.name)

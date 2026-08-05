@@ -144,5 +144,35 @@ class HistoryCommandTests(unittest.TestCase):
         self.assertAlmostEqual(MODULE.traffic_delta(360.0, 356.42), 3.58)
 
 
+class FormattingTests(unittest.TestCase):
+    def setUp(self):
+        self.payload = {
+            "server": {"name": "NoSla"},
+            "billing": {
+                "quota_gb": 1000,
+                "timezone": "Asia/Shanghai",
+                "cycle_start": "2026-08-07",
+                "cycle_end": "2026-09-07",
+            },
+            "traffic": {
+                "used_gb": 356.42,
+                "remaining_gb": 643.58,
+                "usage_percent": 35.64,
+            },
+            "threshold": {"next": 70, "remaining_gb": 343.58},
+        }
+
+    def test_status_includes_next_reset_time(self):
+        self.assertIn(
+            "Next reset:\n2026-09-07 00:00 (Asia/Shanghai)",
+            MODULE.format_status(self.payload),
+        )
+
+    def test_report_includes_next_reset_time(self):
+        server = MODULE.Server(name="NoSla", host="example")
+        report = MODULE.format_report([(server, self.payload)])
+        self.assertIn("Next reset: 2026-09-07 00:00 (Asia/Shanghai)", report)
+
+
 if __name__ == "__main__":
     unittest.main()
