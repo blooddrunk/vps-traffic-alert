@@ -206,15 +206,40 @@ Telegram 命令机器人。
 执行远程系统管理。Bot 本身不会替用户改 SSH key、systemd、Firewall 或 agent
 配置，因此不会因为一个未经授权的 Telegram 更新而扩大服务器权限。
 
+### 更新 controller
+
+`sudo vps-traffic-alert update` 只更新当前主机上的 agent，不会更新 Telegram
+controller。请在 controller 主机上执行下面的一条命令：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/blooddrunk/vps-traffic-alert/main/telegram-bot/update.sh | sudo bash
+```
+
+该命令会更新 controller 程序、Python 依赖和 systemd units，然后重启 controller
+服务；不会询问配置，也不会覆盖下面这些现有内容：
+
+- `/etc/vps-traffic-alert/controller.json`
+- `/etc/vps-traffic-alert/bot.env`
+- `/home/vps-traffic-bot/.ssh/` 下的 SSH key 和 `known_hosts`
+
+更新后可检查服务：
+
+```bash
+sudo systemctl status vps-traffic-bot.service --no-pager
+```
+
+如果同一台主机同时运行 agent，之后执行 `sudo vps-traffic-alert update` 也不会再把
+controller 所需的 `/etc/vps-traffic-alert` 目录改成 controller 用户无法读取的权限。
+
 ## 已安装用户升级
 
-旧版本用户执行：
+旧版本 agent 用户执行：
 
 ```bash
 sudo vps-traffic-alert update
 ```
 
-然后直接运行：
+然后直接运行 agent 命令：
 
 ```bash
 vps-traffic-alert

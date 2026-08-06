@@ -29,6 +29,25 @@ curl -fsSL https://raw.githubusercontent.com/blooddrunk/vps-traffic-alert/main/t
 授权命令，请在每台 agent 上审核后执行。这样既保留了“一键安装”的便利，也不会
 让 Telegram 或一个安装脚本未经确认获得远程系统管理权限。
 
+## 更新 controller
+
+在 controller 主机上执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/blooddrunk/vps-traffic-alert/main/telegram-bot/update.sh | sudo bash
+```
+
+更新脚本无需交互，会更新 controller 程序、Python 依赖和 systemd units，并重启
+`vps-traffic-bot.service`；如果日报 timer 已启用或正在运行，也会一并重启。它会保留：
+
+- `/etc/vps-traffic-alert/controller.json`
+- `/etc/vps-traffic-alert/bot.env`
+- `/home/vps-traffic-bot/.ssh/` 下的 SSH key、`known_hosts` 和其他 SSH 配置
+
+不要使用 `sudo vps-traffic-alert update` 更新 controller；该命令是当前主机上
+agent 的更新命令。如果一台主机同时运行 agent 和 controller，修复后的 agent 更新
+也会保留 controller 所需的配置目录权限。
+
 ## 按步骤配置
 
 ### 1. 配置每台 agent
