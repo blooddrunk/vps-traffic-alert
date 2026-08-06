@@ -19,6 +19,15 @@ fail() {
   exit 1
 }
 
+ensure_directory() {
+  local path="$1" mode="$2"
+  if [[ -d "$path" ]]; then
+    return
+  fi
+  [[ ! -e "$path" ]] || fail "Expected a directory: $path"
+  install -d -m "$mode" "$path"
+}
+
 confirm_tty() {
   local label="$1" default_answer="${2:-n}" answer
   if [[ "$default_answer" == "y" ]]; then
@@ -104,7 +113,8 @@ install_dependencies
 
 systemctl enable --now vnstat >/dev/null 2>&1 || true
 install -d -m 755 /usr/local/lib/vps-traffic-alert
-install -d -m 700 /etc/vps-traffic-alert /var/lib/vps-traffic-alert
+ensure_directory /etc/vps-traffic-alert 700
+ensure_directory /var/lib/vps-traffic-alert 700
 
 download "src/traffic_alert.py" "/usr/local/lib/vps-traffic-alert/traffic_alert.py" 755
 download "vps-traffic-alert" "/usr/local/bin/vps-traffic-alert" 755

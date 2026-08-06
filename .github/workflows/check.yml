@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check shell syntax
-        run: bash -n install.sh install-core.sh vps-traffic-alert telegram-bot/install.sh
+        run: bash -n install.sh install-core.sh vps-traffic-alert telegram-bot/install.sh telegram-bot/update.sh
       - name: Check management command
         run: |
           ./vps-traffic-alert version

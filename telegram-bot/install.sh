@@ -7,6 +7,11 @@ set -euo pipefail
 REPO="blooddrunk/vps-traffic-alert"
 BRANCH="${VPS_TRAFFIC_ALERT_BRANCH:-main}"
 RAW_BASE="https://raw.githubusercontent.com/$REPO/$BRANCH"
+UPDATE_ONLY=false
+
+if [[ "${1:-}" == "--update-only" ]]; then
+  UPDATE_ONLY=true
+fi
 
 BOT_USER="vps-traffic-bot"
 BOT_GROUP="vps-traffic-bot"
@@ -78,7 +83,12 @@ install_dependencies() {
 ensure_prerequisites() {
   command -v systemctl >/dev/null 2>&1 || fail "systemd is required"
   command -v runuser >/dev/null 2>&1 || fail "runuser is required to run the controller as a dedicated user"
-  install_dependencies
+  if ! command -v curl >/dev/null 2>&1 || \
+     ! command -v python3 >/dev/null 2>&1 || \
+     ! command -v ssh >/dev/null 2>&1 || \
+     ! python3 -m venv --help >/dev/null 2>&1; then
+    install_dependencies
+  fi
   command -v python3 >/dev/null 2>&1 || fail "python3 is not installed"
   command -v ssh >/dev/null 2>&1 || fail "An SSH client is not installed"
   python3 -m venv --help >/dev/null 2>&1 || fail "python3-venv is required to create the controller virtual environment"
@@ -138,6 +148,32 @@ install_controller_files() {
   run_as_bot "$APP_DIR/venv/bin/python" -m pip install \
     --disable-pip-version-check --no-input \
     -r "$APP_DIR/requirements.txt"
+}
+
+repair_controller_permissions() {
+  install -d -o root -g "$BOT_GROUP" -m 750 "$CONFIG_DIR"
+  for path in "$CONFIG_FILE" "$ENV_FILE"; do
+    [[ -f "$path" ]] || continue
+    chown root:"$BOT_GROUP" "$path"
+    chmod 640 "$path"
+  done
+}
+
+update_controller() {
+  ensure_prerequisites
+  ensure_bot_user
+  install_controller_files
+  repair_controller_permissions
+  [[ -r "$CONFIG_FILE" ]] || fail "Controller config is missing: $CONFIG_FILE"
+  [[ -r "$ENV_FILE" ]] || fail "Controller token file is missing: $ENV_FILE"
+
+  systemctl daemon-reload
+  systemctl restart vps-traffic-bot.service
+  if systemctl is-active --quiet vps-traffic-report.timer || \
+     systemctl is-enabled --quiet vps-traffic-report.timer; then
+    systemctl restart vps-traffic-report.timer
+  fi
+  say "VPS Traffic Alert Telegram controller updated successfully"
 }
 
 ensure_controller_key() {
@@ -340,6 +376,10 @@ backup_existing_config() {
 
 main() {
   require_root
+  if [[ "$UPDATE_ONLY" == true ]]; then
+    update_controller
+    return
+  fi
   require_tty
   ensure_prerequisites
   ensure_bot_user
